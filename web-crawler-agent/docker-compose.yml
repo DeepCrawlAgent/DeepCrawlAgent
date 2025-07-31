@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # Redis服务
+  redis:
+    image: redis:7-alpine
+    container_name: web-crawler-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: web-crawler-postgres
+    environment:
+      POSTGRES_DB: web_crawler
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Web API服务
+  web:
+    build: .
+    container_name: web-crawler-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/web_crawler
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # Celery Worker
+  worker:
+    build: .
+    container_name: web-crawler-worker
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/web_crawler
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+    command: celery -A workers.celery_app worker --loglevel=info
+
+  # Celery Flower监控
+  flower:
+    build: .
+    container_name: web-crawler-flower
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+    command: celery -A workers.celery_app flower --port=5555
+
+volumes:
+  redis_data:
+  postgres_data: 
